@@ -1,0 +1,365 @@
+import numpy as np
+import pygame
+import sys
+import math
+import random
+import pyfiglet
+from pyfiglet import Figlet
+
+# Choose a font
+font = 'slant'  # You can change this to other fonts like 'banner3-D', 'digital', etc.
+
+# Create a Figlet object
+fig = Figlet(font=font)
+
+# Text to display
+text = 'Connect 4'
+
+# Generate ASCII art
+ascii_banner = fig.renderText(text)
+
+# Print the banner
+print(ascii_banner)
+
+# Initialize Pygame
+pygame.init()
+
+# Define Colors
+BLUE = (0, 0, 255)
+BLACK = (0, 0, 0)
+RED = (220, 20, 60)
+YELLOW = (255, 215, 0)
+WHITE = (255, 255, 255)
+GREY = (128, 128, 128)
+LIGHT_GREY = (200, 200, 200)
+DARK_GREY = (50, 50, 50)
+TRANSPARENT_BLACK = (0, 0, 0, 180)
+
+# Board Dimensions
+ROW_COUNT = 6
+COLUMN_COUNT = 7
+
+SQUARESIZE = 100
+RADIUS = int(SQUARESIZE / 2 - 5)
+
+width = COLUMN_COUNT * SQUARESIZE
+height = (ROW_COUNT + 2) * SQUARESIZE  # Extra rows for displaying turn and mode
+size = (width, height)
+
+# Set up the screen
+screen = pygame.display.set_mode(size)
+pygame.display.set_caption("Connect 4")
+
+# Fonts
+FONT = pygame.font.SysFont("monospace", 75)
+FONT_SMALL = pygame.font.SysFont("monospace", 50)
+FONT_BUTTON = pygame.font.SysFont("arial", 40, bold=True)
+FONT_MESSAGE = pygame.font.SysFont("arial", 60, bold=True)
+
+# Game Variables
+PLAYER = 0
+AI = 1
+EMPTY = 0
+PLAYER_PIECE = 1
+AI_PIECE = 2
+WINDOW_LENGTH = 4
+
+# Clock
+clock = pygame.time.Clock()
+
+def create_board():
+    board = np.zeros((ROW_COUNT, COLUMN_COUNT))
+    return board
+
+def drop_piece(board, row, col, piece):
+    board[row][col] = piece
+
+def is_valid_location(board, col):
+    return board[ROW_COUNT-1][col] == 0
+
+def get_valid_locations(board):
+    valid_locations = []
+    for col in range(COLUMN_COUNT):
+        if is_valid_location(board, col):
+            valid_locations.append(col)
+    return valid_locations
+
+def get_next_open_row(board, col):
+    for r in range(ROW_COUNT):
+        if board[r][col] == 0:
+            return r
+
+def winning_move(board, piece):
+    # Check horizontal locations
+    for c in range(COLUMN_COUNT-3):
+        for r in range(ROW_COUNT):
+            if (board[r][c] == piece and board[r][c+1] == piece and
+                board[r][c+2] == piece and board[r][c+3] == piece):
+                return [(r, c+i) for i in range(4)]
+
+    # Check vertical locations
+    for c in range(COLUMN_COUNT):
+        for r in range(ROW_COUNT-3):
+            if (board[r][c] == piece and board[r+1][c] == piece and
+                board[r+2][c] == piece and board[r+3][c] == piece):
+                return [(r+i, c) for i in range(4)]
+
+    # Check positively sloped diagonals
+    for c in range(COLUMN_COUNT-3):
+        for r in range(ROW_COUNT-3):
+            if (board[r][c] == piece and board[r+1][c+1] == piece and
+                board[r+2][c+2] == piece and board[r+3][c+3] == piece):
+                return [(r+i, c+i) for i in range(4)]
+
+    # Check negatively sloped diagonals
+    for c in range(COLUMN_COUNT-3):
+        for r in range(3, ROW_COUNT):
+            if (board[r][c] == piece and board[r-1][c+1] == piece and
+                board[r-2][c+2] == piece and board[r-3][c+3] == piece):
+                return [(r-i, c+i) for i in range(4)]
+
+    return None
+
+def evaluate_window(window, piece):
+    score = 0
+    opp_piece = PLAYER_PIECE if piece == AI_PIECE else AI_PIECE
+
+    if window.count(piece) == 4:
+        score += 100
+    elif window.count(piece) == 3 and window.count(EMPTY) == 1:
+        score += 5
+    elif window.count(piece) == 2 and window.count(EMPTY) == 2:
+        score += 2
+
+    if window.count(opp_piece) == 3 and window.count(EMPTY) == 1:
+        score -= 4
+
+    return score
+
+def score_position(board, piece):
+    score = 0
+
+    ## Score center column
+    center_array = [int(i) for i in list(board[:, COLUMN_COUNT//2])]
+    center_count = center_array.count(piece)
+    score += center_count * 3
+
+    ## Score Horizontal
+    for r in range(ROW_COUNT):
+        row_array = [int(i) for i in list(board[r,:])]
+        for c in range(COLUMN_COUNT-3):
+            window = row_array[c:c+WINDOW_LENGTH]
+            score += evaluate_window(window, piece)
+
+    ## Score Vertical
+    for c in range(COLUMN_COUNT):
+        col_array = [int(i) for i in list(board[:,c])]
+        for r in range(ROW_COUNT-3):
+            window = col_array[r:r+WINDOW_LENGTH]
+            score += evaluate_window(window, piece)
+
+    ## Score positive sloped diagonal
+    for r in range(ROW_COUNT-3):
+        for c in range(COLUMN_COUNT-3):
+            window = [board[r+i][c+i] for i in range(WINDOW_LENGTH)]
+            score += evaluate_window(window, piece)
+
+    ## Score negative sloped diagonal
+    for r in range(ROW_COUNT-3):
+        for c in range(COLUMN_COUNT-3):
+            window = [board[r+3-i][c+i] for i in range(WINDOW_LENGTH)]
+            score += evaluate_window(window, piece)
+
+    return score
+
+def is_terminal_node(board):
+    return winning_move(board, PLAYER_PIECE) or winning_move(board, AI_PIECE) or len(get_valid_locations(board)) == 0
+
+def minimax(board, depth, alpha, beta, maximizingPlayer):
+    valid_locations = get_valid_locations(board)
+    terminal = is_terminal_node(board)
+    if depth == 0 or terminal:
+        if terminal:
+            if winning_move(board, AI_PIECE):
+                return (None, 100000000000000)
+            elif winning_move(board, PLAYER_PIECE):
+                return (None, -10000000000000)
+            else:  # Game is over, no more valid moves
+                return (None, 0)
+        else:  # Depth is zero
+            return (None, score_position(board, AI_PIECE))
+    if maximizingPlayer:
+        value = -math.inf
+        best_col = random.choice(valid_locations)
+        for col in valid_locations:
+            row = get_next_open_row(board, col)
+            temp_board = board.copy()
+            drop_piece(temp_board, row, col, AI_PIECE)
+            new_score = minimax(temp_board, depth-1, alpha, beta, False)[1]
+            if new_score > value:
+                value = new_score
+                best_col = col
+            alpha = max(alpha, value)
+            if alpha >= beta:
+                break
+        return best_col, value
+    else:  # Minimizing player
+        value = math.inf
+        best_col = random.choice(valid_locations)
+        for col in valid_locations:
+            row = get_next_open_row(board, col)
+            temp_board = board.copy()
+            drop_piece(temp_board, row, col, PLAYER_PIECE)
+            new_score = minimax(temp_board, depth-1, alpha, beta, True)[1]
+            if new_score < value:
+                value = new_score
+                best_col = col
+            beta = min(beta, value)
+            if alpha >= beta:
+                break
+        return best_col, value
+
+def draw_board(board, winning_sequence=None, message=None, mode_text="Single Player"):
+    for c in range(COLUMN_COUNT):
+        for r in range(ROW_COUNT):
+            pygame.draw.rect(screen, BLUE, (c*SQUARESIZE, r*SQUARESIZE + SQUARESIZE*2, SQUARESIZE, SQUARESIZE))
+            pygame.draw.circle(screen, BLACK, (int(c*SQUARESIZE + SQUARESIZE/2), int(r*SQUARESIZE + SQUARESIZE*2 + SQUARESIZE/2)), RADIUS)
+
+    for c in range(COLUMN_COUNT):
+        for r in range(ROW_COUNT):
+            if board[r][c] == PLAYER_PIECE:
+                pygame.draw.circle(screen, RED, (int(c*SQUARESIZE + SQUARESIZE/2), height - int(r*SQUARESIZE + SQUARESIZE/2)), RADIUS)
+            elif board[r][c] == AI_PIECE:
+                pygame.draw.circle(screen, YELLOW, (int(c*SQUARESIZE + SQUARESIZE/2), height - int(r*SQUARESIZE + SQUARESIZE/2)), RADIUS)
+
+    # Highlight winning sequence
+    if winning_sequence:
+        for pos in winning_sequence:
+            r, c = pos
+            pygame.draw.circle(screen, WHITE, (int(c*SQUARESIZE + SQUARESIZE/2), height - int(r*SQUARESIZE + SQUARESIZE/2)), RADIUS, 5)
+
+    # Display game mode
+    mode_label = FONT_SMALL.render(mode_text, 1, WHITE)
+    screen.blit(mode_label, (10, SQUARESIZE//4))
+
+    # Display message if any
+    if message:
+        # Create a semi-transparent overlay
+        overlay = pygame.Surface((width, height), pygame.SRCALPHA)
+        overlay.fill(TRANSPARENT_BLACK)
+        screen.blit(overlay, (0,0))
+
+        # Render the message
+        message_label = FONT_MESSAGE.render(message, 1, WHITE)
+        msg_rect = message_label.get_rect(center=(width//2, height//2 - 50))
+        screen.blit(message_label, msg_rect)
+
+        # Draw Reset Button
+        button_width = 200
+        button_height = 60
+        button_x = (width - button_width) // 2
+        button_y = height//2 + 20
+        pygame.draw.rect(screen, LIGHT_GREY, (button_x, button_y, button_width, button_height), border_radius=10)
+        pygame.draw.rect(screen, DARK_GREY, (button_x, button_y, button_width, button_height), 5, border_radius=10)
+        reset_text = FONT_BUTTON.render("Reset", 1, BLACK)
+        reset_rect = reset_text.get_rect(center=(button_x + button_width//2, button_y + button_height//2))
+        screen.blit(reset_text, reset_rect)
+
+    pygame.display.update()
+
+def display_message(message, color, winning_sequence=None):
+    draw_board(board, winning_sequence, message)
+
+def reset_game():
+    global board, game_over, turn
+    board = create_board()
+    game_over = False
+    turn = PLAYER  # Player starts
+    draw_board(board)
+    pygame.display.update()
+
+def main():
+    global board, game_over, turn
+    board = create_board()
+    game_over = False
+    turn = PLAYER  # Player starts
+    game_mode = "Single Player"  # Default mode
+
+    draw_board(board, mode_text=game_mode)
+    pygame.display.update()
+
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+
+            if event.type == pygame.MOUSEMOTION:
+                if not game_over:
+                    pygame.draw.rect(screen, BLACK, (0, SQUARESIZE, width, SQUARESIZE))
+                    posx = event.pos[0]
+                    if turn == PLAYER:
+                        pygame.draw.circle(screen, RED, (posx, int(SQUARESIZE*1.5)), RADIUS)
+                    pygame.display.update()
+
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                if not game_over:
+                    pygame.draw.rect(screen, BLACK, (0, SQUARESIZE, width, SQUARESIZE))
+                    posx = event.pos[0]
+                    col = int(math.floor(posx/SQUARESIZE))
+
+                    if is_valid_location(board, col):
+                        row = get_next_open_row(board, col)
+                        drop_piece(board, row, col, PLAYER_PIECE)
+
+                        winning_sequence = winning_move(board, PLAYER_PIECE)
+                        if winning_sequence:
+                            game_over = True
+                            draw_board(board, winning_sequence, "You Win!", game_mode)
+                        elif len(get_valid_locations(board)) == 0:
+                            game_over = True
+                            draw_board(board, None, "Draw!", game_mode)
+                        else:
+                            turn = AI
+                            draw_board(board, mode_text=game_mode)
+
+                elif game_over:
+                    # Check if reset button is clicked
+                    mouse_x, mouse_y = event.pos
+                    button_width = 200
+                    button_height = 60
+                    button_x = (width - button_width) // 2
+                    button_y = height//2 + 20
+                    if (button_x <= mouse_x <= button_x + button_width) and (button_y <= mouse_y <= button_y + button_height):
+                        reset_game()
+
+        # AI's Turn
+        if turn == AI and not game_over:
+            pygame.time.wait(500)  # Small delay for better UX
+            col, minimax_score = minimax(board, 5, -math.inf, math.inf, True)
+
+            if is_valid_location(board, col):
+                row = get_next_open_row(board, col)
+                drop_piece(board, row, col, AI_PIECE)
+
+                winning_sequence = winning_move(board, AI_PIECE)
+                if winning_sequence:
+                    game_over = True
+                    draw_board(board, winning_sequence, "AI Wins!", game_mode)
+                elif len(get_valid_locations(board)) == 0:
+                    game_over = True
+                    draw_board(board, None, "Draw!", game_mode)
+                else:
+                    turn = PLAYER
+                    draw_board(board, mode_text=game_mode)
+
+        # Check for Draw
+        if not game_over and len(get_valid_locations(board)) == 0:
+            game_over = True
+            draw_board(board, None, "Draw!", game_mode)
+
+        pygame.display.update()
+        clock.tick(60)
+
+if __name__ == "__main__":
+    main()
